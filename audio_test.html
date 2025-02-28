@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Editor</title>
+</head>
+<body>
+    <h1>Audio Editor</h1>
+    <input type="file" id="audio-file" accept="audio/*">
+    <input type="text" id="audio-url" placeholder="Enter audio URL">
+    <button id="load-audio">Load Audio</button>
+    <br><br>
+    <audio id="audio-player" controls></audio>
+    <br><br>
+
+    <!-- Playback control slider -->
+    <input type="range" id="playback-controller" min="0" value="0" step="0.1" disabled>
+    <br><br>
+
+    <div class="controls">
+        <button id="play-pause">Play/Pause</button>
+        <button id="stop">Stop</button>
+        <button id="rewind">Rewind</button>
+        <button id="fast-rewind">Fast Rewind</button>
+        <button id="forward">Forward</button>
+        <button id="fast-forward">Fast Forward</button>
+        <span id="stopwatch">00:00:00</span>
+    </div>
+    <br><br>
+    <canvas id="waveform-original"></canvas>
+    <canvas id="waveform-modified"></canvas>
+
+    <!-- Equalizer Controls -->
+    <div class="controls">
+        <h3>Equalizer Control</h3>
+        <div id="equalizer">
+            <label for="eq-100">100Hz</label>
+            <input type="range" id="eq-100" min="-30" max="30" value="0">
+            <br>
+            <label for="eq-250">250Hz</label>
+            <input type="range" id="eq-250" min="-30" max="30" value="0">
+            <br>
+            <label for="eq-500">500Hz</label>
+            <input type="range" id="eq-500" min="-30" max="30" value="0">
+            <br>
+            <label for="eq-750">750Hz</label>
+            <input type="range" id="eq-750" min="-30" max="30" value="0">
+            <br>
+            <label for="eq-1000">1000Hz</label>
+            <input type="range" id="eq-1000" min="-30" max="30" value="0">
+            <br>
+            <label for="eq-2500">2500Hz</label>
+            <input type="range" id="eq-2500" min="-30" max="30" value="0">
+            <br>
+            <label for="eq-5000">5000Hz</label>
+            <input type="range" id="eq-5000" min="-30" max="30" value="0">
+            <br>
+            <label for="eq-7500">7500Hz</label>
+            <input type="range" id="eq-7500" min="-30" max="30" value="0">
+            <br>
+            <label for="eq-10000">10000Hz</label>
+            <input type="range" id="eq-10000" min="-30" max="30" value="0">
+        </div>
+        <button id="reset-equalizer">Reset Equalizer</button>
+    </div>
+
+    <script>
+        const audioFileInput = document.getElementById('audio-file');
+        const audioUrlInput = document.getElementById('audio-url');
+        const loadAudioButton = document.getElementById('load-audio');
+        const audioPlayer = document.getElementById('audio-player');
+        const playbackController = document.getElementById('playback-controller');
+        const stopwatch = document.getElementById('stopwatch');
+
+        const playPauseButton = document.getElementById('play-pause');
+        const stopButton = document.getElementById('stop');
+        const rewindButton = document.getElementById('rewind');
+        const fastRewindButton = document.getElementById('fast-rewind');
+        const forwardButton = document.getElementById('forward');
+        const fastForwardButton = document.getElementById('fast-forward');
+
+        let audioContext;
+        let audioBuffer;
+        let sourceNode;
+        let interval;
+        let currentOffset = 0;
+        let isPlaying = false;
+        let isAudioLoaded = false;
+        let rewindClicks = 0;
+
+        loadAudioButton.addEventListener('click', () => {
+            const file = audioFileInput.files[0];
+            const url = audioUrlInput.value;
+
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    audioPlayer.src = e.target.result;
+                    audioPlayer.load();
+                    loadAudioBuffer(e.target.result);
+                };
+                reader.readAsDataURL(file);
+            } else if (url) {
+                audioPlayer.src = url;
+                audioPlayer.load();
+                loadAudioBuffer(url);
+            } else {
+                alert("Please select a file or enter a URL.");
+            }
+        });
+
+        function loadAudioBuffer(audioSrc) {
+            const request = new XMLHttpRequest();
+            request.open('GET', audioSrc, true);
+            request.responseType = 'arraybuffer';
+
+            request.onload = () => {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                audioContext.decodeAudioData(request.response, (buffer) => {
+                    audioBuffer = buffer;
+                    isAudioLoaded = true; // Set the audio loaded flag
+
+                    // Set maximum limit for playback slider to audio's duration
+                    playbackController.max = audioBuffer.duration;
+                    playbackController.value = 0; // Initialize the slider value
+                    playbackController.disabled = false; // Enable the slider
+                }, (error) => {
+                    console.error("Error decoding audio data", error);
+                });
+            };
+
+            request.send();
+        }
+
+        playPauseButton.addEventListener('click', togglePlayPause);
+        stopButton.addEventListener('click', stop);
+        rewindButton.addEventListener('click', () => {
+            rewindClicks++;
+            changeOffset(-0.1 * rewindClicks);
+        }); // Rewind by 0.1 second per click
+        fastRewindButton.addEventListener('click', () => changeOffset(-5)); // Fast Rewind by 5 seconds
+        forwardButton.addEventListener('click', () => changeOffset(1)); // Forward by 1 second
+        fastForwardButton.addEventListener('click', () => changeOffset(5)); // Fast Forward by 5 seconds
+
+        function togglePlayPause() {
+            if (isAudioLoaded && audioContext) {
+                if (isPlaying) {
+                    pause();
+                } else {
+                    startPlayback();
+                }
+            }
+        }
+
+        function startPlayback() {
+            if (!audioBuffer) return; // Prevent error before audio loaded
+
+            if (sourceNode) {
+                sourceNode.stop();
+                sourceNode.disconnect();
+            }
+
+            sourceNode = audioContext.createBufferSource();
+            sourceNode.buffer = audioBuffer;
+            sourceNode.connect(audioContext.destination); // Connect to the destination
+
+            sourceNode.start(0, currentOffset);
+            isPlaying = true;
+
+            sourceNode.onended = () => {
+                stop(); // Reset the state when playback is done
+            };
+
+            startStopwatch();
+        }
+
+        function pause() {
+            if (sourceNode) {
+                sourceNode.stop();
+                currentOffset += audioContext.currentTime; // Update offset
+                sourceNode.disconnect();
+                sourceNode = null; // Optional, free up the resource
+            }
+            stopStopwatch();
+            isPlaying = false;
+        }
+
+        function stop() {
+            if (sourceNode) {
+                sourceNode.stop();
+                sourceNode.disconnect();
+                sourceNode = null;
+            }
+            stopStopwatch();
+            currentOffset = 0;
+            isPlaying = false;
+            playbackController.value = 0; // Reset the playback controller
+            rewindClicks = 0; // Reset rewind clicks
+        }
+
+        function changeOffset(delta) {
+            if (!isAudioLoaded) return; // Ensure audio is loaded
+
+            // Calculate the new offset while keeping it within valid bounds (0 to duration)
+            currentOffset = Math.max(0, Math.min(audioBuffer.duration, currentOffset + delta));
+
+            // Update the playback controller value
+            playbackController.value = currentOffset;
+
+            // Update the audio player's current time directly
+            audioPlayer.currentTime = currentOffset; 
+        }
+
+        function startStopwatch() {
+            interval = setInterval(() => {
+                const elapsed = currentOffset + (isPlaying ? audioContext.currentTime - currentOffset : 0);
+                const minutes = Math.floor(elapsed / 60);
+                const seconds = Math.floor(elapsed % 60);
+                stopwatch.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                playbackController.value = elapsed; // Update the slider value
+            }, 500); // Update the display every half second
+        }
+
+        function stopStopwatch() {
+            clearInterval(interval);
+        }
+
+        playbackController.addEventListener('input', (event) => {
+            currentOffset = parseFloat(event.target.value);
+            if (isPlaying) {
+                pause(); // Pause before seeking
+                startPlayback(); // Restart playback from the new offset
+            } else {
+                changeOffset(0); // Update the offset without playing
+            }
+        });
+
+        resetEqualizerButton.addEventListener('click', () => {
+            // Reset equalizer sliders
+            document.querySelectorAll('#equalizer input[type="range"]').forEach(slider => {
+                slider.value = 0;
+            });
+        });
+
+    </script>
+</body>
+</html>
